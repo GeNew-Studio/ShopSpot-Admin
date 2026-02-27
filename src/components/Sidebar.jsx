@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, FileText, User, LogOut } from 'lucide-react'
+import { FileText, Store, User, LogOut } from 'lucide-react'
 
 export default function Sidebar({ admin, onLogout }) {
   const location = useLocation()
@@ -25,6 +25,13 @@ export default function Sidebar({ admin, onLogout }) {
         >
           <FileText size={18} />
           Applications
+        </button>
+        <button
+          className={`nav-item ${isActive('/stores') ? 'active' : ''}`}
+          onClick={() => navigate('/stores')}
+        >
+          <Store size={18} />
+          Stores
         </button>
       </nav>
 
