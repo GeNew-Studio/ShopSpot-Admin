@@ -17,16 +17,14 @@ export default function StoresList({ admin }) {
 
   const fetchStores = async () => {
     try {
-      const { data, error } = await supabase.rpc('admin_get_applications', {
-        p_admin_id: admin.id,
-        p_status: 'approved'
-      })
+      const { data, error } = await supabase
+        .from('shops')
+        .select('*')
+        .order('created_at', { ascending: false })
 
       if (error) throw error
 
-      if (data?.success) {
-        setStores(data.applications || [])
-      }
+      setStores(data || [])
     } catch (err) {
       console.error('Error fetching stores:', err)
       setStores([])
@@ -74,10 +72,10 @@ export default function StoresList({ admin }) {
 
       <div className="applications-table stores-table">
         <div className="table-header">
-          <span>Business Name</span>
-          <span>Owner</span>
+          <span>Store Name</span>
+          <span>Contact</span>
           <span>Address</span>
-          <span>Approved</span>
+          <span>Date</span>
           <span>Action</span>
         </div>
 
@@ -94,10 +92,10 @@ export default function StoresList({ admin }) {
               className="table-row"
               onClick={() => navigate(`/stores/${store.id}`)}
             >
-              <span className="business-name">{store.business_name}</span>
-              <span className="owner-name">{store.owner_name}</span>
-              <span className="address">{store.address}</span>
-              <span className="date">{formatDate(store.reviewed_at || store.created_at)}</span>
+              <span className="business-name">{store.store_name}</span>
+              <span className="owner-name">{store.contact_info || '—'}</span>
+              <span className="address">{store.location}</span>
+              <span className="date">{formatDate(store.updated_at || store.created_at)}</span>
               <span>
                 <button
                   className="review-btn"

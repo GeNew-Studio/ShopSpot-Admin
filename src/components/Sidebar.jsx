@@ -41,7 +41,7 @@ export default function Sidebar({ admin, onLogout }) {
             <User size={18} />
           </div>
           <div className="admin-info">
-            <div className="name">{admin.display_name || admin.username}</div>
+            <div className="name">{admin.display_name || admin.email || 'Admin'}</div>
             <div className="role">Administrator</div>
           </div>
         </div>

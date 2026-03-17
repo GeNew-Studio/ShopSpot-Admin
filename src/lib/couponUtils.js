@@ -21,7 +21,7 @@
  * @param {number|null} [payload.product_price]
  * @param {string} [payload.offer_type='regular'] - 'regular' | 'special'
  * @param {number[]|null} [payload.valid_weekdays]
- * @param {boolean} [payload.is_exclusive_partner=false] - admin-only flag for exclusive partner coupons
+ * @param {boolean} [payload.is_exclusive=false] - admin-only flag for exclusive partner coupons
  */
 export async function addCoupon(supabase, admin, payload) {
   const {
@@ -39,7 +39,7 @@ export async function addCoupon(supabase, admin, payload) {
     product_price = null,
     offer_type = 'regular',
     valid_weekdays = null,
-    is_exclusive_partner = false
+    is_exclusive = false
   } = payload
 
   const discountVal =
@@ -82,10 +82,7 @@ export async function addCoupon(supabase, admin, payload) {
     offer_type: offer_type || 'regular',
     valid_weekdays: validWeekdays
   }
-  // Include is_exclusive_partner only if the column exists (run add_is_exclusive_partner.sql first)
-  try {
-    row.is_exclusive_partner = !!is_exclusive_partner
-  } catch (_) {}
+  row.is_exclusive = !!is_exclusive
   const rows = [row]
 
   const { error } = await supabase.from('coupons').insert(rows)

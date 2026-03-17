@@ -89,7 +89,7 @@ const defaultForm = {
   product_price: '',
   offer_type: 'regular',
   valid_weekdays: [],
-  is_exclusive_partner: false
+  is_exclusive: false
 }
 
 export default function StoreDetail({ admin }) {
@@ -167,25 +167,24 @@ export default function StoreDetail({ admin }) {
 
   const fetchStore = async () => {
     try {
-      const { data, error } = await supabase.rpc('admin_get_application', {
-        p_admin_id: admin.id,
-        p_application_id: id
-      })
+      const { data, error } = await supabase
+        .from('shops')
+        .select('*')
+        .eq('id', id)
+        .single()
 
       if (error) throw error
 
-      if (data?.success && data.application) {
-        if (data.application.status !== 'approved') {
-          setMessage({ type: 'error', text: 'This application is not approved yet. Only approved stores can manage coupons.' })
-        } else {
-          setStore(data.application)
-          await fetchCoupons()
-        }
+      if (data) {
+        setStore(data)
+        await fetchCoupons()
       } else {
-        setMessage({ type: 'error', text: data?.error || 'Store not found' })
+        setStore(null)
+        setMessage({ type: 'error', text: 'Store not found' })
       }
     } catch (err) {
-      setMessage({ type: 'error', text: err.message })
+      setStore(null)
+      setMessage({ type: 'error', text: err.message || 'Store not found' })
     } finally {
       setLoading(false)
     }
@@ -315,7 +314,7 @@ export default function StoreDetail({ admin }) {
         product_price: productPrice,
         offer_type: offerType,
         valid_weekdays: validWeekdays,
-        is_exclusive_partner: formData.is_exclusive_partner
+        is_exclusive: formData.is_exclusive
       })
 
       setMessage({ type: 'success', text: asDraft ? 'Coupon saved as draft.' : 'Coupon added successfully!' })
@@ -420,7 +419,7 @@ export default function StoreDetail({ admin }) {
       </button>
 
       <div className="detail-header">
-        <h1>{store.business_name}</h1>
+        <h1>{store.store_name}</h1>
       </div>
 
       {message && (
@@ -431,25 +430,34 @@ export default function StoreDetail({ admin }) {
       )}
 
       <div className="detail-grid">
+        {/* Left Column: Store Information */}
         <div>
           <div className="detail-card">
             <h2><Building size={18} /> Store Information</h2>
             <div className="info-grid">
               <div className="info-row">
-                <span className="info-label">Business Name</span>
-                <span className="info-value">{store.business_name}</span>
+                <span className="info-label">Store Name</span>
+                <span className="info-value">{store.store_name}</span>
               </div>
               <div className="info-row">
-                <span className="info-label">Owner</span>
-                <span className="info-value">{store.owner_name}</span>
+                <span className="info-label">Description</span>
+                <span className="info-value">{store.description || '—'}</span>
+              </div>
+              <div className="info-row">
+                <span className="info-label">Contact</span>
+                <span className="info-value">{store.contact_info || '—'}</span>
               </div>
               <div className="info-row">
                 <span className="info-label">Address</span>
-                <span className="info-value">{store.address}</span>
+                <span className="info-value">{store.location}</span>
               </div>
               <div className="info-row">
-                <span className="info-label">Approved On</span>
-                <span className="info-value">{formatDate(store.reviewed_at || store.created_at)}</span>
+                <span className="info-label">Industry</span>
+                <span className="info-value">{store.industry || '—'}</span>
+              </div>
+              <div className="info-row">
+                <span className="info-label">Created</span>
+                <span className="info-value">{formatDate(store.created_at)}</span>
               </div>
             </div>
           </div>
@@ -679,7 +687,7 @@ export default function StoreDetail({ admin }) {
 
                 <div className="exclusive-partner-toggle">
                   <label className="toggle-label">
-                    <input type="checkbox" checked={formData.is_exclusive_partner} onChange={e => setFormData(f => ({ ...f, is_exclusive_partner: e.target.checked }))} className="toggle-checkbox" />
+                    <input type="checkbox" checked={formData.is_exclusive} onChange={e => setFormData(f => ({ ...f, is_exclusive: e.target.checked }))} className="toggle-checkbox" />
                     <span className="toggle-text"><Sparkles size={16} /> Set as <strong>Exclusive Partner</strong> coupon</span>
                   </label>
                   <p className="toggle-hint">Exclusive partner coupons are highlighted on the main website.</p>
@@ -709,11 +717,11 @@ export default function StoreDetail({ admin }) {
                 {coupons.map(c => (
                   <div
                     key={c.id}
-                    className={`coupon-item ${c.is_exclusive_partner ? 'exclusive' : ''} ${isExpired(c.expiration_date) ? 'expired' : ''}`}
+                    className={`coupon-item ${c.is_exclusive ? 'exclusive' : ''} ${isExpired(c.expiration_date) ? 'expired' : ''}`}
                   >
                     <div className="coupon-main">
                       <div className="coupon-code">
-                        {c.is_exclusive_partner && <Crown size={14} title="Exclusive Partner" />}
+                        {c.is_exclusive && <Crown size={14} title="Exclusive Partner" />}
                         <code>{c.coupon_name}</code>
                       </div>
                       <div className="coupon-discount">{formatDiscount(c)}</div>
