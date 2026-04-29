@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import LoginPage from './pages/LoginPage'
@@ -26,6 +26,7 @@ export default function App() {
   const [admin, setAdmin] = useState(null)
   const [loading, setLoading] = useState(true)
   const [authError, setAuthError] = useState('')
+  const verifiedRef = useRef(false)
 
   useEffect(() => {
     let initialCheckDone = false
@@ -33,6 +34,7 @@ export default function App() {
     const handleSession = async (session) => {
       if (!session?.user) {
         setAdmin(null)
+        verifiedRef.current = false
         setLoading(false)
         return
       }
@@ -41,14 +43,17 @@ export default function App() {
         if (isAdmin) {
           setAdmin(userToAdmin(session.user))
           setAuthError('')
+          verifiedRef.current = true
         } else {
           await supabase.auth.signOut()
           setAdmin(null)
+          verifiedRef.current = false
           setAuthError('Access denied. Your account is not authorized as an admin.')
         }
       } catch (err) {
         console.error('Auth check error:', err)
         setAdmin(null)
+        verifiedRef.current = false
         setAuthError('Something went wrong verifying your access. Please try again.')
       }
       setLoading(false)
@@ -69,11 +74,18 @@ export default function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!initialCheckDone) return
+      if (event === 'SIGNED_OUT') {
+        setAdmin(null)
+        verifiedRef.current = false
+        return
+      }
+      if (event === 'TOKEN_REFRESHED' && verifiedRef.current) {
+        return
+      }
       if (event === 'SIGNED_IN' && session?.user) {
+        if (verifiedRef.current) return
         setLoading(true)
         await handleSession(session)
-      } else if (event === 'SIGNED_OUT') {
-        setAdmin(null)
       }
     })
 

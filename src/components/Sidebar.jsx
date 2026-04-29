@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom'
-import { FileText, Store, User, LogOut } from 'lucide-react'
+import { FileText, Store, Crown, BarChart3, User, LogOut } from 'lucide-react'
 
 export default function Sidebar({ admin, onLogout }) {
   const location = useLocation()
@@ -32,6 +32,20 @@ export default function Sidebar({ admin, onLogout }) {
         >
           <Store size={18} />
           Stores
+        </button>
+        <button
+          className={`nav-item ${isActive('/partner-coupons') ? 'active' : ''}`}
+          onClick={() => navigate('/partner-coupons')}
+        >
+          <Crown size={18} />
+          Partner Coupons
+        </button>
+        <button
+          className={`nav-item ${isActive('/analytics') ? 'active' : ''}`}
+          onClick={() => navigate('/analytics')}
+        >
+          <BarChart3 size={18} />
+          Analytics
         </button>
       </nav>
 

@@ -6,7 +6,7 @@ import { addCoupon } from '../lib/couponUtils'
 import {
   ArrowLeft, Building, Tag, Plus, Trash2, Crown, Clock,
   AlertCircle, CheckCircle, Sparkles, ShoppingCart, QrCode, Eye,
-  Upload, X, Store, Utensils, ShoppingBag, Briefcase
+  Upload, X, Store, Utensils, ShoppingBag, Briefcase, Pencil
 } from 'lucide-react'
 
 const INDUSTRY_OPTIONS = {
@@ -100,6 +100,7 @@ export default function StoreDetail({ admin }) {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState(null)
   const [showAddCoupon, setShowAddCoupon] = useState(false)
+  const [editingCouponId, setEditingCouponId] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [formData, setFormData] = useState(defaultForm)
   const [useCouponsTable, setUseCouponsTable] = useState(true)
@@ -211,8 +212,11 @@ export default function StoreDetail({ admin }) {
           setCoupons(list.map(c => ({
             ...c,
             coupon_name: c.coupon_name || c.code,
+            conditions: c.conditions || c.description || '',
+            discount_type: c.discount_type === 'percent' ? 'percentage' : (c.discount_type || 'fixed'),
             expiration_date: c.expiration_date ?? c.expires_at,
-            coupon_usage_type: c.coupon_usage_type || 'view_only'
+            coupon_usage_type: c.coupon_usage_type || 'view_only',
+            is_exclusive: c.is_exclusive ?? c.is_exclusive_partner ?? false
           })))
           setUseCouponsTable(false)
         } else {
@@ -324,6 +328,205 @@ export default function StoreDetail({ admin }) {
       fetchStore()
     } catch (err) {
       setMessage({ type: 'error', text: err.message || 'Failed to add coupon' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const resetCouponForm = () => {
+    setShowAddCoupon(false)
+    setEditingCouponId(null)
+    setFormData(defaultForm)
+    setQrSource('auto')
+  }
+
+  const normalizeDateForInput = (dateStr) => {
+    if (!dateStr) return ''
+    const d = new Date(dateStr)
+    if (Number.isNaN(d.getTime())) return ''
+    return d.toISOString().slice(0, 10)
+  }
+
+  const handleStartEditCoupon = (coupon) => {
+    const currentTypeOptions = INDUSTRY_OPTIONS[coupon.industry]?.types || []
+    const knownType = currentTypeOptions.some(opt => opt.value === coupon.type)
+    const isOtherType = coupon.type === 'other' || (!knownType && !!coupon.type)
+    setEditingCouponId(coupon.id)
+    setShowAddCoupon(true)
+    setQrSource(coupon.custom_qr_url ? 'upload' : 'auto')
+    setFormData({
+      coupon_name: coupon.coupon_name || '',
+      discount_type: coupon.discount_type || 'percentage',
+      discount_value: coupon.discount_type === 'bogo' ? '1' : String(coupon.discount_value ?? ''),
+      expiration_date: normalizeDateForInput(coupon.expiration_date),
+      noExpirationDate: !coupon.expiration_date,
+      is_active: !!coupon.is_active,
+      conditions: coupon.conditions || '',
+      industry: coupon.industry || '',
+      type: isOtherType ? 'other' : (coupon.type || ''),
+      customIndustryType: isOtherType && coupon.type !== 'other' ? coupon.type : '',
+      coupon_usage_type: coupon.coupon_usage_type || 'view_only',
+      custom_qr_url: coupon.custom_qr_url || '',
+      product_price: coupon.product_price == null ? '' : String(coupon.product_price),
+      offer_type: coupon.offer_type || 'regular',
+      valid_weekdays: Array.isArray(coupon.valid_weekdays) ? coupon.valid_weekdays : [],
+      is_exclusive: !!coupon.is_exclusive
+    })
+  }
+
+  const handleUpdateCoupon = async (e) => {
+    e.preventDefault()
+    if (!editingCouponId) return
+    if (!validate(false)) return
+
+    const finalType = formData.type === 'other' && formData.customIndustryType
+      ? formData.customIndustryType
+      : formData.type
+    const expirationDate = formData.noExpirationDate
+      ? null
+      : (formData.expiration_date?.trim() || null)
+    const discountVal = formData.discount_type === 'bogo'
+      ? 1
+      : parseFloat(formData.discount_value)
+    const productPrice = formData.coupon_usage_type === 'add_to_cart'
+      ? (parseFloat(formData.product_price) || null)
+      : null
+    const offerType = formData.offer_type || 'regular'
+    const validWeekdays = offerType === 'special' && Array.isArray(formData.valid_weekdays) && formData.valid_weekdays.length > 0
+      ? formData.valid_weekdays
+      : null
+
+    if (formData.discount_type !== 'bogo' && (isNaN(discountVal) || discountVal < 0)) {
+      setMessage({ type: 'error', text: 'Discount value is required.' })
+      return
+    }
+
+    const updatePayload = {
+      coupon_name: (formData.coupon_name || '').trim(),
+      discount_type: formData.discount_type,
+      discount_value: formData.discount_type === 'bogo' ? 1 : discountVal,
+      expiration_date: expirationDate,
+      is_active: formData.is_active,
+      conditions: formData.conditions || null,
+      industry: formData.industry || null,
+      type: (finalType && finalType.trim()) || null,
+      coupon_usage_type: formData.coupon_usage_type || 'view_only',
+      custom_qr_url: formData.coupon_usage_type === 'qr_scan' ? (formData.custom_qr_url || null) : null,
+      product_price: productPrice,
+      offer_type: offerType,
+      valid_weekdays: validWeekdays,
+      is_exclusive: !!formData.is_exclusive
+    }
+
+    const normalizeDbDate = (value) => {
+      if (!value) return null
+      if (typeof value === 'string') return value.slice(0, 10)
+      const d = new Date(value)
+      if (Number.isNaN(d.getTime())) return null
+      return d.toISOString().slice(0, 10)
+    }
+
+    const verifyCouponPersisted = (row) => {
+      if (!row) return { ok: false, reason: 'Coupon not found after save.' }
+      const expected = {
+        coupon_name: updatePayload.coupon_name || null,
+        discount_type: updatePayload.discount_type || null,
+        discount_value: Number(updatePayload.discount_value),
+        expiration_date: updatePayload.expiration_date || null,
+        conditions: updatePayload.conditions || null,
+        is_active: !!updatePayload.is_active,
+        is_exclusive: !!updatePayload.is_exclusive
+      }
+      const actual = {
+        coupon_name: row.coupon_name || null,
+        discount_type: row.discount_type || null,
+        discount_value: Number(row.discount_value),
+        expiration_date: normalizeDbDate(row.expiration_date),
+        conditions: row.conditions || null,
+        is_active: !!row.is_active,
+        is_exclusive: !!row.is_exclusive
+      }
+      const sameNumber = Number.isFinite(expected.discount_value) && Number.isFinite(actual.discount_value)
+        ? Math.abs(expected.discount_value - actual.discount_value) < 0.000001
+        : expected.discount_value === actual.discount_value
+      const ok =
+        expected.coupon_name === actual.coupon_name &&
+        expected.discount_type === actual.discount_type &&
+        sameNumber &&
+        expected.expiration_date === actual.expiration_date &&
+        expected.conditions === actual.conditions &&
+        expected.is_active === actual.is_active &&
+        expected.is_exclusive === actual.is_exclusive
+      if (ok) return { ok: true, reason: '' }
+      return {
+        ok: false,
+        reason: `Saved row mismatch. DB now has name="${actual.coupon_name}", type="${actual.discount_type}", value=${actual.discount_value}, expiration=${actual.expiration_date || 'null'}.`
+      }
+    }
+
+    setSubmitting(true)
+    setMessage(null)
+    try {
+      if (useCouponsTable) {
+        const { data: rpcData, error: rpcError } = await supabase.rpc('admin_update_coupon', {
+          p_admin_id: admin.id,
+          p_coupon_id: editingCouponId,
+          p_coupon_name: updatePayload.coupon_name,
+          p_discount_type: updatePayload.discount_type,
+          p_discount_value: updatePayload.discount_value,
+          p_expiration_date: updatePayload.expiration_date,
+          p_is_active: updatePayload.is_active,
+          p_conditions: updatePayload.conditions,
+          p_industry: updatePayload.industry,
+          p_type: updatePayload.type,
+          p_coupon_usage_type: updatePayload.coupon_usage_type,
+          p_custom_qr_url: updatePayload.custom_qr_url,
+          p_product_price: updatePayload.product_price,
+          p_offer_type: updatePayload.offer_type,
+          p_valid_weekdays: updatePayload.valid_weekdays,
+          p_is_exclusive: updatePayload.is_exclusive
+        })
+        if (rpcError) throw rpcError
+        if (!rpcData?.success) {
+          throw new Error(rpcData?.error || 'No coupon record was updated. Please refresh and try again.')
+        }
+      } else {
+        if (updatePayload.discount_type === 'bogo') {
+          throw new Error('BOGO is not supported for this coupon source. Use percentage or fixed amount.')
+        }
+        const { data, error } = await supabase.rpc('admin_update_store_coupon', {
+          p_admin_id: admin.id,
+          p_coupon_id: editingCouponId,
+          p_code: updatePayload.coupon_name,
+          p_description: updatePayload.conditions,
+          p_discount_type: updatePayload.discount_type === 'percentage' ? 'percent' : 'fixed',
+          p_discount_value: updatePayload.discount_value,
+          p_expires_at: updatePayload.expiration_date,
+          p_is_exclusive_partner: !!updatePayload.is_exclusive
+        })
+        if (error) throw error
+        if (!data?.success) throw new Error(data?.error || 'Failed to update coupon')
+      }
+
+      const { data: verifyRows, error: verifyError } = await supabase
+        .from('coupons')
+        .select('id, coupon_name, discount_type, discount_value, expiration_date, conditions, is_active, is_exclusive, updated_at')
+        .eq('id', editingCouponId)
+        .limit(1)
+      if (verifyError) throw verifyError
+      const verification = verifyCouponPersisted(verifyRows?.[0] || null)
+      if (!verification.ok) {
+        throw new Error(`Supabase verification failed. ${verification.reason}`)
+      }
+
+      const savedAt = verifyRows?.[0]?.updated_at
+        ? new Date(verifyRows[0].updated_at).toLocaleString('en-US')
+        : 'just now'
+      setMessage({ type: 'success', text: `Coupon updated and verified in Supabase (${savedAt}).` })
+      resetCouponForm()
+      fetchStore()
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message || 'Failed to update coupon' })
     } finally {
       setSubmitting(false)
     }
@@ -470,20 +673,24 @@ export default function StoreDetail({ admin }) {
               <button
                 className="btn-primary"
                 onClick={() => {
-                  setShowAddCoupon(!showAddCoupon)
-                  if (!showAddCoupon) {
+                  const nextOpen = !showAddCoupon
+                  setShowAddCoupon(nextOpen)
+                  if (nextOpen) {
+                    setEditingCouponId(null)
                     setFormData(defaultForm)
                     setQrSource('auto')
+                  } else {
+                    resetCouponForm()
                   }
                 }}
               >
                 <Plus size={18} />
-                Add Coupon
+                {showAddCoupon ? 'Close' : 'Add Coupon'}
               </button>
             </div>
 
             {showAddCoupon && (
-              <form className="add-coupon-form coupon-manager-form" onSubmit={(e) => handleAddCoupon(e, false)}>
+              <form className="add-coupon-form coupon-manager-form" onSubmit={editingCouponId ? handleUpdateCoupon : (e) => handleAddCoupon(e, false)}>
                 <div className="form-group">
                   <label>Coupon Name <span className="required">*</span></label>
                   <input
@@ -694,12 +901,14 @@ export default function StoreDetail({ admin }) {
                 </div>
 
                 <div className="form-actions modal-actions">
-                  <button type="button" className="btn-secondary" onClick={() => { setShowAddCoupon(false); setFormData(defaultForm); setQrSource('auto') }}>Cancel</button>
-                  <button type="button" className="btn-secondary btn-draft" onClick={(e) => handleAddCoupon(e, true)} disabled={submitting}>
-                    {submitting ? 'Saving...' : 'Save as Draft'}
-                  </button>
+                  <button type="button" className="btn-secondary" onClick={resetCouponForm}>Cancel</button>
+                  {!editingCouponId && (
+                    <button type="button" className="btn-secondary btn-draft" onClick={(e) => handleAddCoupon(e, true)} disabled={submitting}>
+                      {submitting ? 'Saving...' : 'Save as Draft'}
+                    </button>
+                  )}
                   <button type="submit" className="btn-success" disabled={submitting}>
-                    {submitting ? 'Adding...' : 'Add Coupon'}
+                    {submitting ? (editingCouponId ? 'Updating...' : 'Adding...') : (editingCouponId ? 'Update Coupon' : 'Add Coupon')}
                   </button>
                 </div>
               </form>
@@ -739,13 +948,22 @@ export default function StoreDetail({ admin }) {
                         <span>{c.coupon_usage_type}</span>
                       </div>
                     </div>
-                    <button
-                      className="coupon-remove"
-                      onClick={() => handleRemoveCoupon(c.id)}
-                      title="Remove coupon"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    <div className="coupon-actions">
+                      <button
+                        className="coupon-edit"
+                        onClick={() => handleStartEditCoupon(c)}
+                        title="Edit coupon"
+                      >
+                        <Pencil size={16} />
+                      </button>
+                      <button
+                        className="coupon-remove"
+                        onClick={() => handleRemoveCoupon(c.id)}
+                        title="Remove coupon"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
