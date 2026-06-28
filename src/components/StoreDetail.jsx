@@ -4,6 +4,13 @@ import QRCode from 'qrcode'
 import { supabase } from '../lib/supabase'
 import { addCoupon } from '../lib/couponUtils'
 import { INDUSTRY_OPTIONS } from '../lib/industryOptions'
+import GoogleMapsLocationPicker from './GoogleMapsLocationPicker'
+import ShopMediaFields from './ShopMediaFields'
+import {
+  uploadShopLogo,
+  uploadShopBanners,
+  normalizeBannerUrls
+} from '../lib/shopMediaUtils'
 import {
   ArrowLeft, Building, Tag, Plus, Trash2, Crown, Clock,
   AlertCircle, CheckCircle, Sparkles, ShoppingCart, QrCode, Eye,
@@ -34,6 +41,26 @@ const defaultForm = {
   is_exclusive: false
 }
 
+function storeToEditForm(store) {
+  const currentTypeOptions = INDUSTRY_OPTIONS[store.industry]?.types || []
+  const knownType = currentTypeOptions.some(opt => opt.value === store.industry_type)
+  const isOtherType = store.industry_type === 'other' || (!knownType && !!store.industry_type)
+  return {
+    store_name: store.store_name || '',
+    location: store.location || '',
+    contact_info: store.contact_info || '',
+    description: store.description || '',
+    industry: store.industry || '',
+    industry_type: isOtherType ? 'other' : (store.industry_type || ''),
+    customIndustryType: isOtherType && store.industry_type !== 'other' ? store.industry_type : '',
+    latitude: store.latitude ?? null,
+    longitude: store.longitude ?? null,
+    google_place_id: store.google_place_id || null,
+    logo_url: store.logo_url || '',
+    banner_urls: normalizeBannerUrls(store.banner_urls)
+  }
+}
+
 export default function StoreDetail({ admin }) {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -50,8 +77,18 @@ export default function StoreDetail({ admin }) {
   const [qrPreviewUrl, setQrPreviewUrl] = useState(null)
   const [uploadingQr, setUploadingQr] = useState(false)
   const qrFileRef = useRef(null)
+  const [editingStore, setEditingStore] = useState(false)
+  const [storeForm, setStoreForm] = useState(null)
+  const [storeLogoFile, setStoreLogoFile] = useState(null)
+  const [storeBannerFiles, setStoreBannerFiles] = useState([])
+  const [savingStore, setSavingStore] = useState(false)
+  const [storeMediaUploading, setStoreMediaUploading] = useState(false)
 
   useEffect(() => {
+    setEditingStore(false)
+    setStoreForm(null)
+    setStoreLogoFile(null)
+    setStoreBannerFiles([])
     fetchStore()
   }, [id])
 
@@ -496,6 +533,137 @@ export default function StoreDetail({ admin }) {
     }
   }
 
+  const handleStoreFieldChange = (e) => {
+    const { name, value } = e.target
+    setStoreForm(prev => {
+      const next = { ...prev, [name]: value }
+      if (name === 'industry') {
+        next.industry_type = ''
+        next.customIndustryType = ''
+      }
+      return next
+    })
+    setMessage(null)
+  }
+
+  const handleStoreMapChange = ({ lat, lng, formattedAddress, placeId }) => {
+    setStoreForm(prev => ({
+      ...prev,
+      latitude: lat,
+      longitude: lng,
+      google_place_id: placeId,
+      location: formattedAddress?.trim() ? formattedAddress.trim() : prev.location
+    }))
+    setMessage(null)
+  }
+
+  const startEditStore = () => {
+    setEditingStore(true)
+    setStoreForm(storeToEditForm(store))
+    setStoreLogoFile(null)
+    setStoreBannerFiles([])
+    setMessage(null)
+  }
+
+  const cancelEditStore = () => {
+    setEditingStore(false)
+    setStoreForm(null)
+    setStoreLogoFile(null)
+    setStoreBannerFiles([])
+  }
+
+  const handleSaveStore = async (e) => {
+    e.preventDefault()
+    if (!storeForm) return
+
+    const name = storeForm.store_name.trim()
+    const location = storeForm.location.trim()
+    if (!name) {
+      setMessage({ type: 'error', text: 'Store name is required.' })
+      return
+    }
+    if (!location) {
+      setMessage({ type: 'error', text: 'Address is required.' })
+      return
+    }
+    if (!storeForm.industry?.trim()) {
+      setMessage({ type: 'error', text: 'Industry is required.' })
+      return
+    }
+    if (!storeForm.industry_type?.trim()) {
+      setMessage({ type: 'error', text: 'Type is required.' })
+      return
+    }
+
+    let resolvedType = storeForm.industry_type.trim()
+    if (resolvedType === 'other') {
+      const custom = storeForm.customIndustryType.trim()
+      if (!custom) {
+        setMessage({ type: 'error', text: 'Please describe the type when you choose "Others".' })
+        return
+      }
+      resolvedType = custom
+    }
+
+    const lat = storeForm.latitude
+    const lng = storeForm.longitude
+    if (lat == null || lng == null || Number.isNaN(lat) || Number.isNaN(lng)) {
+      setMessage({ type: 'error', text: 'Choose a location using the map.' })
+      return
+    }
+
+    setSavingStore(true)
+    setMessage(null)
+
+    try {
+      let logoUrl = storeForm.logo_url || null
+      let bannerUrls = normalizeBannerUrls(storeForm.banner_urls)
+
+      if (storeLogoFile || storeBannerFiles.length > 0) {
+        setStoreMediaUploading(true)
+        if (storeLogoFile) {
+          logoUrl = await uploadShopLogo(supabase, admin.id, id, storeLogoFile)
+        }
+        if (storeBannerFiles.length > 0) {
+          const uploaded = await uploadShopBanners(supabase, admin.id, id, storeBannerFiles)
+          bannerUrls = [...bannerUrls, ...uploaded]
+        }
+        setStoreMediaUploading(false)
+      }
+
+      const { data, error } = await supabase.rpc('admin_update_shop', {
+        p_admin_id: admin.id,
+        p_shop_id: id,
+        p_store_name: name,
+        p_location: location,
+        p_contact_info: storeForm.contact_info.trim() || null,
+        p_description: storeForm.description.trim() || null,
+        p_industry: storeForm.industry.trim(),
+        p_industry_type: resolvedType,
+        p_latitude: lat,
+        p_longitude: lng,
+        p_google_place_id: storeForm.google_place_id?.trim() || null,
+        p_logo_url: logoUrl,
+        p_banner_urls: bannerUrls
+      })
+
+      if (error) throw error
+      if (!data?.success) throw new Error(data?.error || 'Could not update store.')
+
+      setMessage({ type: 'success', text: 'Store updated.' })
+      setEditingStore(false)
+      setStoreForm(null)
+      setStoreLogoFile(null)
+      setStoreBannerFiles([])
+      await fetchStore()
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message || 'Could not update store.' })
+    } finally {
+      setSavingStore(false)
+      setStoreMediaUploading(false)
+    }
+  }
+
   const toggleWeekday = (value) => {
     setFormData(f => ({
       ...f,
@@ -578,33 +746,172 @@ export default function StoreDetail({ admin }) {
         {/* Left Column: Store Information */}
         <div>
           <div className="detail-card">
-            <h2><Building size={18} /> Store Information</h2>
-            <div className="info-grid">
-              <div className="info-row">
-                <span className="info-label">Store Name</span>
-                <span className="info-value">{store.store_name}</span>
-              </div>
-              <div className="info-row">
-                <span className="info-label">Description</span>
-                <span className="info-value">{store.description || '—'}</span>
-              </div>
-              <div className="info-row">
-                <span className="info-label">Contact</span>
-                <span className="info-value">{store.contact_info || '—'}</span>
-              </div>
-              <div className="info-row">
-                <span className="info-label">Address</span>
-                <span className="info-value">{store.location}</span>
-              </div>
-              <div className="info-row">
-                <span className="info-label">Industry</span>
-                <span className="info-value">{store.industry || '—'}</span>
-              </div>
-              <div className="info-row">
-                <span className="info-label">Created</span>
-                <span className="info-value">{formatDate(store.created_at)}</span>
-              </div>
+            <div className="coupons-header" style={{ marginBottom: editingStore ? 16 : 0 }}>
+              <h2><Building size={18} /> Store Information</h2>
+              {!editingStore ? (
+                <button type="button" className="btn-secondary btn-sm" onClick={startEditStore}>
+                  <Pencil size={14} /> Edit store
+                </button>
+              ) : (
+                <button type="button" className="btn-ghost btn-sm" onClick={cancelEditStore} disabled={savingStore || storeMediaUploading}>
+                  Cancel
+                </button>
+              )}
             </div>
+
+            {!editingStore ? (
+              <>
+                {(store.logo_url || normalizeBannerUrls(store.banner_urls).length > 0) && (
+                  <div className="shop-media-display">
+                    {store.logo_url && (
+                      <img src={store.logo_url} alt={`${store.store_name} logo`} className="shop-media-logo-preview" />
+                    )}
+                    {normalizeBannerUrls(store.banner_urls).length > 0 && (
+                      <div className="shop-media-banner-grid">
+                        {normalizeBannerUrls(store.banner_urls).map((url, index) => (
+                          <img key={`${url}-${index}`} src={url} alt={`Banner ${index + 1}`} className="shop-media-banner-img" />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="info-grid">
+                  <div className="info-row">
+                    <span className="info-label">Store Name</span>
+                    <span className="info-value">{store.store_name}</span>
+                  </div>
+                  <div className="info-row">
+                    <span className="info-label">Description</span>
+                    <span className="info-value">{store.description || '—'}</span>
+                  </div>
+                  <div className="info-row">
+                    <span className="info-label">Contact</span>
+                    <span className="info-value">{store.contact_info || '—'}</span>
+                  </div>
+                  <div className="info-row">
+                    <span className="info-label">Address</span>
+                    <span className="info-value">{store.location}</span>
+                  </div>
+                  <div className="info-row">
+                    <span className="info-label">Industry</span>
+                    <span className="info-value">{store.industry || '—'}</span>
+                  </div>
+                  <div className="info-row">
+                    <span className="info-label">Created</span>
+                    <span className="info-value">{formatDate(store.created_at)}</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <form className="add-coupon-form" onSubmit={handleSaveStore}>
+                <div className="form-group">
+                  <label>Store name <span className="required">*</span></label>
+                  <input
+                    type="text"
+                    name="store_name"
+                    className="form-input"
+                    value={storeForm.store_name}
+                    onChange={handleStoreFieldChange}
+                  />
+                </div>
+                <ShopMediaFields
+                  logoUrl={storeForm.logo_url}
+                  bannerUrls={storeForm.banner_urls}
+                  pendingLogoFile={storeLogoFile}
+                  pendingBannerFiles={storeBannerFiles}
+                  onLogoUrlChange={(url) => setStoreForm(prev => ({ ...prev, logo_url: url }))}
+                  onBannerUrlsChange={(urls) => setStoreForm(prev => ({ ...prev, banner_urls: urls }))}
+                  onPendingLogoFileChange={setStoreLogoFile}
+                  onPendingBannerFilesChange={setStoreBannerFiles}
+                  onError={(text) => setMessage({ type: 'error', text })}
+                  disabled={savingStore}
+                  uploading={storeMediaUploading}
+                />
+                <div className="form-group">
+                  <label>Location on map <span className="required">*</span></label>
+                  <GoogleMapsLocationPicker
+                    latitude={storeForm.latitude}
+                    longitude={storeForm.longitude}
+                    onLocationChange={handleStoreMapChange}
+                    disabled={savingStore || storeMediaUploading}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Address <span className="required">*</span></label>
+                  <input
+                    type="text"
+                    name="location"
+                    className="form-input"
+                    value={storeForm.location}
+                    onChange={handleStoreFieldChange}
+                  />
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Industry <span className="required">*</span></label>
+                    <select name="industry" className="form-input" value={storeForm.industry} onChange={handleStoreFieldChange}>
+                      <option value="">Select industry</option>
+                      {Object.entries(INDUSTRY_OPTIONS).map(([key, { label }]) => (
+                        <option key={key} value={key}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>
+                      {(storeForm.industry && INDUSTRY_OPTIONS[storeForm.industry]?.typeLabel) || 'Type'}{' '}
+                      <span className="required">*</span>
+                    </label>
+                    <select
+                      name="industry_type"
+                      className="form-input"
+                      value={storeForm.industry_type}
+                      onChange={handleStoreFieldChange}
+                      disabled={!storeForm.industry}
+                    >
+                      <option value="">{storeForm.industry ? 'Select type' : 'Choose industry first'}</option>
+                      {(INDUSTRY_OPTIONS[storeForm.industry]?.types || []).map(({ value, label }) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {storeForm.industry_type === 'other' && (
+                  <div className="form-group">
+                    <label>Custom type <span className="required">*</span></label>
+                    <input
+                      type="text"
+                      name="customIndustryType"
+                      className="form-input"
+                      value={storeForm.customIndustryType}
+                      onChange={handleStoreFieldChange}
+                    />
+                  </div>
+                )}
+                <div className="form-group">
+                  <label>Contact</label>
+                  <input
+                    type="text"
+                    name="contact_info"
+                    className="form-input"
+                    value={storeForm.contact_info}
+                    onChange={handleStoreFieldChange}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Description</label>
+                  <textarea
+                    name="description"
+                    className="form-input"
+                    rows={3}
+                    value={storeForm.description}
+                    onChange={handleStoreFieldChange}
+                  />
+                </div>
+                <button type="submit" className="btn-primary" disabled={savingStore || storeMediaUploading}>
+                  {savingStore || storeMediaUploading ? 'Saving…' : 'Save store'}
+                </button>
+              </form>
+            )}
           </div>
         </div>
 

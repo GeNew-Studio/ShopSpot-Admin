@@ -3,6 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { INDUSTRY_OPTIONS } from '../lib/industryOptions'
 import GoogleMapsLocationPicker from './GoogleMapsLocationPicker'
+import ShopMediaFields from './ShopMediaFields'
+import {
+  uploadShopLogo,
+  uploadShopBanners,
+  saveShopMedia
+} from '../lib/shopMediaUtils'
 import {
   Store, RefreshCw, Tag, ChevronDown, Search, X, Plus,
   CheckCircle, AlertCircle
@@ -125,6 +131,9 @@ export default function StoresList({ admin }) {
   const [createForm, setCreateForm] = useState(defaultCreateForm)
   const [createSubmitting, setCreateSubmitting] = useState(false)
   const [createMessage, setCreateMessage] = useState(null)
+  const [createLogoFile, setCreateLogoFile] = useState(null)
+  const [createBannerFiles, setCreateBannerFiles] = useState([])
+  const [createMediaUploading, setCreateMediaUploading] = useState(false)
 
   useEffect(() => {
     fetchStores()
@@ -275,7 +284,37 @@ export default function StoresList({ admin }) {
 
       const shopId = data.shop_id
 
+      if (shopId && (createLogoFile || createBannerFiles.length > 0)) {
+        setCreateMediaUploading(true)
+        try {
+          let logoUrl = null
+          let bannerUrls = []
+          if (createLogoFile) {
+            logoUrl = await uploadShopLogo(supabase, admin.id, shopId, createLogoFile)
+          }
+          if (createBannerFiles.length > 0) {
+            bannerUrls = await uploadShopBanners(supabase, admin.id, shopId, createBannerFiles)
+          }
+          await saveShopMedia(supabase, admin, shopId, { logoUrl, bannerUrls })
+        } catch (mediaErr) {
+          setCreateMessage({
+            type: 'error',
+            text: `Store created, but images failed to upload: ${mediaErr.message || 'Unknown error'}`
+          })
+          setCreateLogoFile(null)
+          setCreateBannerFiles([])
+          setCreateMediaUploading(false)
+          await fetchStores()
+          navigate(`/stores/${shopId}`)
+          return
+        } finally {
+          setCreateMediaUploading(false)
+        }
+      }
+
       setCreateForm(defaultCreateForm())
+      setCreateLogoFile(null)
+      setCreateBannerFiles([])
       setShowCreateForm(false)
       setCreateMessage(null)
       await fetchStores()
@@ -474,6 +513,15 @@ export default function StoresList({ admin }) {
                 placeholder="e.g. Cafe Nova – Central"
               />
             </div>
+            <ShopMediaFields
+              pendingLogoFile={createLogoFile}
+              pendingBannerFiles={createBannerFiles}
+              onPendingLogoFileChange={setCreateLogoFile}
+              onPendingBannerFilesChange={setCreateBannerFiles}
+              onError={(text) => setCreateMessage({ type: 'error', text })}
+              disabled={createSubmitting}
+              uploading={createMediaUploading}
+            />
             <div className="form-group">
               <label>Location on map <span className="required">*</span></label>
               <GoogleMapsLocationPicker
@@ -564,15 +612,17 @@ export default function StoresList({ admin }) {
               />
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button type="submit" className="btn-primary" disabled={createSubmitting}>
-                {createSubmitting ? 'Saving…' : 'Save store'}
+              <button type="submit" className="btn-primary" disabled={createSubmitting || createMediaUploading}>
+                {createSubmitting || createMediaUploading ? 'Saving…' : 'Save store'}
               </button>
               <button
                 type="button"
                 className="btn-ghost"
-                disabled={createSubmitting}
+                disabled={createSubmitting || createMediaUploading}
                 onClick={() => {
                   setCreateForm(defaultCreateForm())
+                  setCreateLogoFile(null)
+                  setCreateBannerFiles([])
                   setCreateMessage(null)
                 }}
               >
